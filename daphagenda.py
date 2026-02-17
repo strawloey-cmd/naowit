@@ -72,8 +72,8 @@ async def set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["city"] = update.message.text
 
+    # Calendário funcional, semana começa no domingo
     calendar, step = DetailedTelegramCalendar(
-        locale="pt",
         firstweekday=6  # domingo
     ).build()
 
@@ -89,8 +89,7 @@ async def calendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     result, key, step = DetailedTelegramCalendar(
-        locale="pt",
-        firstweekday=6
+        firstweekday=6  # domingo
     ).process(query.data)
 
     if not result and key:
