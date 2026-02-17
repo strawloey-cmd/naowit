@@ -1,4 +1,4 @@
 python-telegram-bot
-DetailedTelegramCalendar
+python-telegram-bot-calendar
 pytz
 tzlocal
