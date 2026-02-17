@@ -53,7 +53,7 @@ def init_db():
 # ======================
 
 async def novo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await chat.send_message("📝 Dê um nome ao seu evento:")
+    await update.message.reply_text("📝 Dê um nome ao seu evento:")
     return TITLE
 
 async def set_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
