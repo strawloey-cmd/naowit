@@ -70,6 +70,8 @@ async def set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["city"] = update.message.text
+
     calendar, step = DetailedTelegramCalendar(
         locale="pt",
         firstweekday=6  # domingo
