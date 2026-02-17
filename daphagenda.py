@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -19,9 +19,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # CONFIG
 # ======================
 TOKEN = os.getenv("TOKEN")
-
 TITLE, COUNTRY, CITY, DATE, RECURRENCE = range(5)
-NOTIFY_HOUR = 7  # horário padrão das notificações
+NOTIFY_HOUR = 7  # Horário padrão das notificações
 
 # ======================
 # DATABASE
@@ -244,7 +243,7 @@ def check_events(application):
         notify_time = dt.replace(hour=NOTIFY_HOUR, minute=0, second=0, microsecond=0)
         send_notification = False
 
-        if recurrence == "once" and dt.date() == now.date() and now >= notify_time and now < notify_time + timedelta(minutes=1):
+        if recurrence == "once" and dt.date() == now.date() and now.hour == NOTIFY_HOUR and now.minute == 0:
             send_notification = True
         elif recurrence == "daily" and now.hour == NOTIFY_HOUR and now.minute == 0:
             send_notification = True
