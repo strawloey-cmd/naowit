@@ -137,6 +137,20 @@ def build_event_menu(user_id: int):
     ]
     return InlineKeyboardMarkup(keyboard)
 
+def build_delete_menu(user_id: int):
+    conn = sqlite3.connect("reminders.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title FROM reminders WHERE user_id = ?", (user_id,))
+    events = cursor.fetchall()
+    conn.close()
+    if not events:
+        return None
+    keyboard = [
+        [InlineKeyboardButton(title, callback_data=f"del_{event_id}")]
+        for event_id, title in events
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 # ======================
 # /LISTA
 # ======================
@@ -190,7 +204,7 @@ async def back_to_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /DELETAR
 # ======================
 async def deletar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    menu = build_event_menu(update.effective_user.id)
+    menu = build_delete_menu(update.effective_user.id)
     if not menu:
         await update.message.reply_text("Você não possui eventos para deletar.")
         return
@@ -199,7 +213,7 @@ async def deletar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    event_id = query.data.split("_")[1]
+    event_id = query.data.split("_")[1]  # del_123
     context.user_data["delete_id"] = event_id
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
@@ -212,7 +226,10 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("❌ Cancelar", callback_data="delete_no"),
         ]
     ]
-    await query.edit_message_text(f"⚠️ Tem certeza que deseja deletar o evento:\n\n📝 {title} ?", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(
+        f"⚠️ Tem certeza que deseja deletar o evento:\n\n📝 {title} ?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -270,7 +287,7 @@ def main():
 
     # Deletar
     app.add_handler(CommandHandler("deletar", deletar))
-    app.add_handler(CallbackQueryHandler(confirm_delete, pattern="^view_"))
+    app.add_handler(CallbackQueryHandler(confirm_delete, pattern="^del_"))
     app.add_handler(CallbackQueryHandler(execute_delete, pattern="^delete_"))
 
     # Run
