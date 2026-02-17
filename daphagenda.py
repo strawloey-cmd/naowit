@@ -232,22 +232,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # NOTIFICAÇÕES AUTOMÁTICAS
 # ======================
 def check_events(application):
-    now = datetime.now()
+    brasil_tz = pytz.timezone("America/Sao_Paulo")
+    now = datetime.now(brasil_tz)  # horário atual em Brasília
+
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
     cursor.execute("SELECT id, user_id, title, datetime, recurrence FROM reminders")
     events = cursor.fetchall()
     conn.close()
+
     for event_id, user_id, title, dt_str, recurrence in events:
         dt = datetime.fromisoformat(dt_str)
-        notify_time = dt.replace(hour=NOTIFY_HOUR, minute=0, second=0, microsecond=0)
+        # ajusta a data do evento para horário de Brasília às 07:00
+        event_time = brasil_tz.localize(datetime(dt.year, dt.month, dt.day, 7, 0, 0))
+
         send_notification = False
 
-        if recurrence == "once" and dt.date() == now.date() and now.hour == NOTIFY_HOUR and now.minute == 0:
+        if recurrence == "once" and event_time.date() == now.date() and now.hour == 7 and now.minute == 0:
             send_notification = True
-        elif recurrence == "daily" and now.hour == NOTIFY_HOUR and now.minute == 0:
+        elif recurrence == "daily" and now.hour == 7 and now.minute == 0:
             send_notification = True
-        elif recurrence == "monthly" and dt.day == now.day and now.hour == NOTIFY_HOUR and now.minute == 0:
+        elif recurrence == "monthly" and dt.day == now.day and now.hour == 7 and now.minute == 0:
             send_notification = True
 
         if send_notification:
