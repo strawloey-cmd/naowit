@@ -19,14 +19,12 @@ from telegram.ext import (
 
 from telegram_bot_calendar import DetailedTelegramCalendar
 
-
 # ======================
 # CONFIG
 # ======================
 TOKEN = os.getenv("TOKEN")
 
 TITLE, COUNTRY, CITY, DATE, RECURRENCE = range(5)
-
 
 # ======================
 # DATABASE
@@ -48,7 +46,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 # ======================
 # /NOVO FLOW
 # ======================
@@ -56,52 +53,35 @@ async def novo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📝 Dê um nome ao seu evento:")
     return TITLE
 
-
 async def set_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["title"] = update.message.text
     await update.message.reply_text("🌍 Informe o país do evento:")
     return COUNTRY
-
 
 async def set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["country"] = update.message.text
     await update.message.reply_text("🏙 Informe a cidade do evento:")
     return CITY
 
-
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["city"] = update.message.text
-
     # Calendário funcional, semana começa no domingo
-    calendar, step = DetailedTelegramCalendar(
-        firstweekday=6  # domingo
-    ).build()
-
+    calendar, step = DetailedTelegramCalendar(firstweekday=6).build()
     await update.message.reply_text(
         "📅 Selecione a data:",
         reply_markup=calendar
     )
     return DATE
 
-
 async def calendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
-    result, key, step = DetailedTelegramCalendar(
-        firstweekday=6  # domingo
-    ).process(query.data)
-
+    result, key, step = DetailedTelegramCalendar(firstweekday=6).process(query.data)
     if not result and key:
-        await query.edit_message_text(
-            "📅 Selecione:",
-            reply_markup=key
-        )
+        await query.edit_message_text("📅 Selecione:", reply_markup=key)
         return DATE
-
     if result:
         context.user_data["datetime"] = result.isoformat()
-
         keyboard = [
             [
                 InlineKeyboardButton("🔁 Uma vez", callback_data="once"),
@@ -109,21 +89,16 @@ async def calendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("🗓 Mensal", callback_data="monthly"),
             ]
         ]
-
         await query.edit_message_text(
-            f"📅 Data selecionada: {result.strftime('%d-%m-%Y')}\n\n"
-            f"Escolha a recorrência:",
+            f"📅 Data selecionada: {result.strftime('%d-%m-%Y')}\n\nEscolha a recorrência:",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return RECURRENCE
 
-
 async def set_recurrence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     recurrence = query.data
-
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -139,10 +114,8 @@ async def set_recurrence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ))
     conn.commit()
     conn.close()
-
     await query.edit_message_text("✅ Evento criado com sucesso!")
     return ConversationHandler.END
-
 
 # ======================
 # MENU BUILDER
@@ -156,40 +129,28 @@ def build_event_menu(user_id: int):
     )
     events = cursor.fetchall()
     conn.close()
-
     if not events:
         return None
-
     keyboard = [
         [InlineKeyboardButton(title, callback_data=f"view_{event_id}")]
         for event_id, title in events
     ]
-
     return InlineKeyboardMarkup(keyboard)
-
 
 # ======================
 # /LISTA
 # ======================
 async def lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
     menu = build_event_menu(update.effective_user.id)
-
     if not menu:
         await update.message.reply_text("Você não possui eventos.")
         return
-
-    await update.message.reply_text(
-        "📋 Seus eventos:",
-        reply_markup=menu
-    )
-
+    await update.message.reply_text("📋 Seus eventos:", reply_markup=menu)
 
 async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     event_id = query.data.split("_")[1]
-
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -198,48 +159,74 @@ async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (event_id,))
     event = cursor.fetchone()
     conn.close()
-
     title, dt_str, country, city, recurrence = event
     dt = datetime.fromisoformat(dt_str)
-
     recurrence_map = {
         "once": "Uma vez",
         "daily": "Diário",
         "monthly": "Mensal"
     }
-
     message = (
         f"📝 Nome: {title}\n\n"
         f"📅 Data: {dt.strftime('%d-%m-%Y')}\n"
         f"📍 Local: {city}, {country}\n"
         f"🔁 Recorrência: {recurrence_map.get(recurrence)}"
     )
-
     keyboard = [
         [InlineKeyboardButton("⬅️ Voltar", callback_data="back_to_list")]
     ]
-
-    await query.edit_message_text(
-        message,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
+    await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def back_to_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     menu = build_event_menu(query.from_user.id)
-
     if not menu:
         await query.edit_message_text("Você não possui eventos.")
         return
+    await query.edit_message_text("📋 Seus eventos:", reply_markup=menu)
 
-    await query.edit_message_text(
-        "📋 Seus eventos:",
-        reply_markup=menu
-    )
+# ======================
+# /DELETAR
+# ======================
+async def deletar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    menu = build_event_menu(update.effective_user.id)
+    if not menu:
+        await update.message.reply_text("Você não possui eventos para deletar.")
+        return
+    await update.message.reply_text("🗑️ Selecione o evento que deseja deletar:", reply_markup=menu)
 
+async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    event_id = query.data.split("_")[1]
+    context.user_data["delete_id"] = event_id
+    conn = sqlite3.connect("reminders.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT title FROM reminders WHERE id = ?", (event_id,))
+    title = cursor.fetchone()[0]
+    conn.close()
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Confirmar", callback_data="delete_yes"),
+            InlineKeyboardButton("❌ Cancelar", callback_data="delete_no"),
+        ]
+    ]
+    await query.edit_message_text(f"⚠️ Tem certeza que deseja deletar o evento:\n\n📝 {title} ?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "delete_yes":
+        event_id = context.user_data.get("delete_id")
+        conn = sqlite3.connect("reminders.db")
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM reminders WHERE id = ?", (event_id,))
+        conn.commit()
+        conn.close()
+        await query.edit_message_text("✅ Evento deletado com sucesso!")
+    else:
+        await query.edit_message_text("❌ Exclusão cancelada.")
 
 # ======================
 # /START
@@ -248,20 +235,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✨ Bem-vindo ao seu lembrete de eventos!\n\n"
         "📅 /novo — Criar evento\n"
-        "📋 /lista — Ver eventos"
+        "📋 /lista — Ver eventos\n"
+        "🗑️ /deletar — Deletar evento"
     )
-
 
 # ======================
 # MAIN
 # ======================
 def main():
     init_db()
-
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Start
     app.add_handler(CommandHandler("start", start))
 
+    # Novo
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("novo", novo)],
         states={
@@ -269,23 +257,24 @@ def main():
             COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_country)],
             CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_city)],
             DATE: [CallbackQueryHandler(calendar_handler)],
-            RECURRENCE: [
-                CallbackQueryHandler(
-                    set_recurrence,
-                    pattern="^(once|daily|monthly)$"
-                )
-            ],
+            RECURRENCE: [CallbackQueryHandler(set_recurrence, pattern="^(once|daily|monthly)$")],
         },
         fallbacks=[]
     )
-
     app.add_handler(conv_handler)
+
+    # Lista
     app.add_handler(CommandHandler("lista", lista))
     app.add_handler(CallbackQueryHandler(view_event, pattern="^view_"))
     app.add_handler(CallbackQueryHandler(back_to_list, pattern="^back_to_list$"))
 
-    app.run_polling()
+    # Deletar
+    app.add_handler(CommandHandler("deletar", deletar))
+    app.add_handler(CallbackQueryHandler(confirm_delete, pattern="^view_"))
+    app.add_handler(CallbackQueryHandler(execute_delete, pattern="^delete_"))
 
+    # Run
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
