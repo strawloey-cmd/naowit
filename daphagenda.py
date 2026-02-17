@@ -1,12 +1,8 @@
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, time, timedelta
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -16,8 +12,8 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-
 from telegram_bot_calendar import DetailedTelegramCalendar
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # ======================
 # CONFIG
@@ -25,6 +21,7 @@ from telegram_bot_calendar import DetailedTelegramCalendar
 TOKEN = os.getenv("TOKEN")
 
 TITLE, COUNTRY, CITY, DATE, RECURRENCE = range(5)
+NOTIFY_HOUR = 7  # horário padrão das notificações
 
 # ======================
 # DATABASE
@@ -65,7 +62,6 @@ async def set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["city"] = update.message.text
-    # Calendário funcional, semana começa no domingo
     calendar, step = DetailedTelegramCalendar(firstweekday=6).build()
     await update.message.reply_text(
         "📅 Selecione a data:",
@@ -123,18 +119,12 @@ async def set_recurrence(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def build_event_menu(user_id: int):
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, title FROM reminders WHERE user_id = ?",
-        (user_id,)
-    )
+    cursor.execute("SELECT id, title FROM reminders WHERE user_id = ?", (user_id,))
     events = cursor.fetchall()
     conn.close()
     if not events:
         return None
-    keyboard = [
-        [InlineKeyboardButton(title, callback_data=f"view_{event_id}")]
-        for event_id, title in events
-    ]
+    keyboard = [[InlineKeyboardButton(title, callback_data=f"view_{event_id}")] for event_id, title in events]
     return InlineKeyboardMarkup(keyboard)
 
 def build_delete_menu(user_id: int):
@@ -145,10 +135,7 @@ def build_delete_menu(user_id: int):
     conn.close()
     if not events:
         return None
-    keyboard = [
-        [InlineKeyboardButton(title, callback_data=f"del_{event_id}")]
-        for event_id, title in events
-    ]
+    keyboard = [[InlineKeyboardButton(title, callback_data=f"del_{event_id}")] for event_id, title in events]
     return InlineKeyboardMarkup(keyboard)
 
 # ======================
@@ -167,28 +154,19 @@ async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     event_id = query.data.split("_")[1]
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT title, datetime, country, city, recurrence
-        FROM reminders WHERE id = ?
-    """, (event_id,))
+    cursor.execute("SELECT title, datetime, country, city, recurrence FROM reminders WHERE id = ?", (event_id,))
     event = cursor.fetchone()
     conn.close()
     title, dt_str, country, city, recurrence = event
     dt = datetime.fromisoformat(dt_str)
-    recurrence_map = {
-        "once": "Uma vez",
-        "daily": "Diário",
-        "monthly": "Mensal"
-    }
+    recurrence_map = {"once": "Uma vez", "daily": "Diário", "monthly": "Mensal"}
     message = (
         f"📝 Nome: {title}\n\n"
         f"📅 Data: {dt.strftime('%d-%m-%Y')}\n"
         f"📍 Local: {city}, {country}\n"
         f"🔁 Recorrência: {recurrence_map.get(recurrence)}"
     )
-    keyboard = [
-        [InlineKeyboardButton("⬅️ Voltar", callback_data="back_to_list")]
-    ]
+    keyboard = [[InlineKeyboardButton("⬅️ Voltar", callback_data="back_to_list")]]
     await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def back_to_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -213,7 +191,7 @@ async def deletar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    event_id = query.data.split("_")[1]  # del_123
+    event_id = query.data.split("_")[1]
     context.user_data["delete_id"] = event_id
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
@@ -221,15 +199,10 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     title = cursor.fetchone()[0]
     conn.close()
     keyboard = [
-        [
-            InlineKeyboardButton("✅ Confirmar", callback_data="delete_yes"),
-            InlineKeyboardButton("❌ Cancelar", callback_data="delete_no"),
-        ]
+        [InlineKeyboardButton("✅ Confirmar", callback_data="delete_yes"),
+         InlineKeyboardButton("❌ Cancelar", callback_data="delete_no")]
     ]
-    await query.edit_message_text(
-        f"⚠️ Tem certeza que deseja deletar o evento:\n\n📝 {title} ?",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await query.edit_message_text(f"⚠️ Tem certeza que deseja deletar o evento:\n\n📝 {title} ?", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -255,6 +228,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 /lista — Ver eventos\n"
         "🗑️ /deletar — Deletar evento"
     )
+
+# ======================
+# NOTIFICAÇÕES AUTOMÁTICAS
+# ======================
+def check_events(application):
+    now = datetime.now()
+    conn = sqlite3.connect("reminders.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, user_id, title, datetime, recurrence FROM reminders")
+    events = cursor.fetchall()
+    conn.close()
+    for event_id, user_id, title, dt_str, recurrence in events:
+        dt = datetime.fromisoformat(dt_str)
+        notify_time = dt.replace(hour=NOTIFY_HOUR, minute=0, second=0, microsecond=0)
+        send_notification = False
+
+        if recurrence == "once" and dt.date() == now.date() and now >= notify_time and now < notify_time + timedelta(minutes=1):
+            send_notification = True
+        elif recurrence == "daily" and now.hour == NOTIFY_HOUR and now.minute == 0:
+            send_notification = True
+        elif recurrence == "monthly" and dt.day == now.day and now.hour == NOTIFY_HOUR and now.minute == 0:
+            send_notification = True
+
+        if send_notification:
+            application.bot.send_message(chat_id=user_id, text=f"⏰ Lembrete: {title} hoje!")
 
 # ======================
 # MAIN
@@ -289,6 +287,11 @@ def main():
     app.add_handler(CommandHandler("deletar", deletar))
     app.add_handler(CallbackQueryHandler(confirm_delete, pattern="^del_"))
     app.add_handler(CallbackQueryHandler(execute_delete, pattern="^delete_"))
+
+    # Scheduler
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(lambda: check_events(app), 'interval', minutes=1)
+    scheduler.start()
 
     # Run
     app.run_polling()
