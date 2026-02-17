@@ -17,7 +17,7 @@ from telegram.ext import (
     filters,
 )
 
-from telegram_bot_calendar import DetailedTelegramCalendar, LSTEP
+from telegram_bot_calendar import DetailedTelegramCalendar
 
 
 # ======================
@@ -70,7 +70,11 @@ async def set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    calendar, step = DetailedTelegramCalendar().build()
+    calendar, step = DetailedTelegramCalendar(
+        locale="pt",
+        firstweekday=6  # domingo
+    ).build()
+
     await update.message.reply_text(
         "📅 Selecione a data:",
         reply_markup=calendar
@@ -82,22 +86,24 @@ async def calendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    result, key, step = DetailedTelegramCalendar().process(query.data)
+    result, key, step = DetailedTelegramCalendar(
+        locale="pt",
+        firstweekday=6
+    ).process(query.data)
 
     if not result and key:
         await query.edit_message_text(
-            f"📅 Selecione {LSTEP[step]}:",
+            "📅 Selecione:",
             reply_markup=key
         )
         return DATE
 
     if result:
-        # salva somente a data (sem hora)
         context.user_data["datetime"] = result.isoformat()
 
         keyboard = [
             [
-                InlineKeyboardButton("🔁 Apenas uma vez", callback_data="none"),
+                InlineKeyboardButton("🔁 Uma vez", callback_data="once"),
                 InlineKeyboardButton("📅 Diário", callback_data="daily"),
                 InlineKeyboardButton("🗓 Mensal", callback_data="monthly"),
             ]
@@ -152,7 +158,6 @@ def build_event_menu(user_id: int):
 
     if not events:
         return None
-        
 
     keyboard = [
         [InlineKeyboardButton(title, callback_data=f"view_{event_id}")]
@@ -197,7 +202,7 @@ async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dt = datetime.fromisoformat(dt_str)
 
     recurrence_map = {
-        "none": "Apenas uma vez",
+        "once": "Uma vez",
         "daily": "Diário",
         "monthly": "Mensal"
     }
@@ -263,7 +268,12 @@ def main():
             COUNTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_country)],
             CITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_city)],
             DATE: [CallbackQueryHandler(calendar_handler)],
-            RECURRENCE: [CallbackQueryHandler(set_recurrence)],
+            RECURRENCE: [
+                CallbackQueryHandler(
+                    set_recurrence,
+                    pattern="^(once|daily|monthly)$"
+                )
+            ],
         },
         fallbacks=[]
     )
