@@ -2,7 +2,7 @@ import sqlite3
 from datetime import datetime
 import pytz
 import tzlocal
-
+import os
 
 from telegram import (
     Update,
@@ -21,11 +21,11 @@ from telegram.ext import (
 
 from telegram_bot_calendar import DetailedTelegramCalendar, LSTEP
 
-import os
 TOKEN = os.getenv("TOKEN")
 
-
-TITLE, COUNTRY, CITY, DATE, TIME, RECURRENCE, EDIT_TIME = range(7)
+# Estados
+TITLE, COUNTRY, CITY, DATE, TIME, RECURRENCE = range(6)
+EDIT_TIME = 100  # separado para evitar conflito
 
 # ======================
 # DATABASE
@@ -49,7 +49,18 @@ def init_db():
     conn.close()
 
 # ======================
-# /NOVO FLOW
+# UTIL
+# ======================
+
+def to_utc(dt_local):
+    return dt_local.astimezone(pytz.utc)
+
+def from_utc_to_local(dt_utc):
+    local_tz = tzlocal.get_localzone()
+    return dt_utc.astimezone(local_tz)
+
+# ======================
+# NOVO EVENTO
 # ======================
 
 async def novo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -57,19 +68,21 @@ async def novo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return TITLE
 
 async def set_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["title"] = update.message.text
+    context.user_data["title"] = update.message.text.strip()
     await update.message.reply_text("🌍 Informe o país do evento:")
     return COUNTRY
 
 async def set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["country"] = update.message.text
-    await update.message.reply_text("🏙️ Informe a cidade do evento:")
+    context.user_data["country"] = update.message.text.strip()
+    await update.message.reply_text("🏙 Informe a cidade do evento:")
     return CITY
 
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["city"] = update.message.text.strip()
     calendar, step = DetailedTelegramCalendar().build()
+
     await update.message.reply_text(
-        f"📅 Selecione a data:",
+        "📅 Selecione a data:",
         reply_markup=calendar
     )
     return DATE
@@ -86,33 +99,32 @@ async def calendar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=key
         )
         return DATE
-    elif result:
-        context.user_data["date"] = result
-        await query.edit_message_text(
-            f"📅 Data selecionada: {result.strftime('%d-%m-%Y')}\n\n"
-            f"⏰ Agora informe o horário (HH:MM):"
-        )
-        return TIME
+
+    context.user_data["date"] = result
+    await query.edit_message_text(
+        f"📅 Data selecionada: {result.strftime('%d-%m-%Y')}\n\n"
+        "⏰ Agora informe o horário (HH:MM):"
+    )
+    return TIME
 
 async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        time_input = update.message.text
-        hour, minute = map(int, time_input.split(":"))
-
+        hour, minute = map(int, update.message.text.split(":"))
         date = context.user_data["date"]
+
         local_tz = tzlocal.get_localzone()
+        dt_local = local_tz.localize(
+            datetime(date.year, date.month, date.day, hour, minute)
+        )
 
-        dt = datetime(date.year, date.month, date.day, hour, minute)
-        dt = local_tz.localize(dt)
+        dt_utc = to_utc(dt_local)
 
-        context.user_data["datetime"] = dt.isoformat()
+        context.user_data["datetime"] = dt_utc.isoformat()
 
         keyboard = [
-            [
-                InlineKeyboardButton("🔁 Apenas uma vez", callback_data="none"),
-                InlineKeyboardButton("📅 Diário", callback_data="daily"),
-                InlineKeyboardButton("🗓️ Mensal", callback_data="monthly"),
-            ]
+            [InlineKeyboardButton("🔁 Apenas uma vez", callback_data="none")],
+            [InlineKeyboardButton("📅 Diário", callback_data="daily")],
+            [InlineKeyboardButton("🗓 Mensal", callback_data="monthly")],
         ]
 
         await update.message.reply_text(
@@ -122,8 +134,8 @@ async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return RECURRENCE
 
-    except:
-        await update.message.reply_text("Formato inválido. Use HH:MM")
+    except ValueError:
+        await update.message.reply_text("❌ Formato inválido. Use HH:MM")
         return TIME
 
 async def set_recurrence(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,6 +143,8 @@ async def set_recurrence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     recurrence = query.data
+
+
 
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
@@ -152,7 +166,7 @@ async def set_recurrence(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ======================
-# MENU BUILDER
+# LISTA
 # ======================
 
 def build_event_menu(user_id):
@@ -166,15 +180,11 @@ def build_event_menu(user_id):
         return None
 
     keyboard = [
-        [InlineKeyboardButton(event[1], callback_data=f"view_{event[0]}")]
-        for event in events
+        [InlineKeyboardButton(title, callback_data=f"view_{event_id}")]
+        for event_id, title in events
     ]
 
     return InlineKeyboardMarkup(keyboard)
-
-# ======================
-# /LISTA
-# ======================
 
 async def lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
     menu = build_event_menu(update.effective_user.id)
@@ -201,33 +211,26 @@ async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     event = cursor.fetchone()
     conn.close()
 
+    if not event:
+        await query.edit_message_text("❌ Evento não encontrado.")
+        return
+
     title, dt_str, country, city, recurrence = event
-    dt = datetime.fromisoformat(dt_str)
 
-    date = dt.strftime("%d-%m-%Y")
-    time = dt.strftime("%H:%M")
-
-    recurrence_map = {
-        "none": "Apenas uma vez",
-        "daily": "Diário",
-        "monthly": "Mensal"
-    }
+    dt_utc = datetime.fromisoformat(dt_str)
+    dt_local = from_utc_to_local(dt_utc)
 
     message = (
         f"📝 Nome: {title}\n\n"
-        f"📅 Data: {date}\n"
-        f"⏰ Hora: {time}\n"
+        f"📅 Data: {dt_local.strftime('%d-%m-%Y')}\n"
+        f"⏰ Hora: {dt_local.strftime('%H:%M')}\n"
         f"📍 Local: {city}, {country}\n"
-        f"🔁 Recorrência: {recurrence_map.get(recurrence)}"
+        f"🔁 Recorrência: {recurrence}"
     )
 
     keyboard = [
-        [
-            InlineKeyboardButton("✏️ Editar horário", callback_data="edit_time")
-        ],
-        [
-            InlineKeyboardButton("⬅️ Voltar", callback_data="back_to_list")
-        ]
+        [InlineKeyboardButton("✏️ Editar horário", callback_data="edit_time")],
+        [InlineKeyboardButton("⬅️ Voltar", callback_data="back_to_list")]
     ]
 
     await query.edit_message_text(
@@ -236,10 +239,10 @@ async def view_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ======================
-# EDIT TIME
+# EDIÇÃO (CONVERSATION SEPARADA)
 # ======================
 
-async def edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def edit_time_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("⏰ Digite o novo horário (HH:MM):")
@@ -254,42 +257,40 @@ async def save_new_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = sqlite3.connect("reminders.db")
         cursor = conn.cursor()
         cursor.execute("SELECT datetime FROM reminders WHERE id = ?", (event_id,))
-        old_dt = datetime.fromisoformat(cursor.fetchone()[0])
+        row = cursor.fetchone()
 
-        new_dt = old_dt.replace(hour=hour, minute=minute)
+        if not row:
+            await update.message.reply_text("❌ Evento não encontrado.")
+            return ConversationHandler.END
+
+        old_dt_utc = datetime.fromisoformat(row[0])
+        old_dt_local = from_utc_to_local(old_dt_utc)
+
+        new_local = old_dt_local.replace(hour=hour, minute=minute)
+        new_utc = to_utc(new_local)
 
         cursor.execute(
             "UPDATE reminders SET datetime = ? WHERE id = ?",
-            (new_dt.isoformat(), event_id)
+            (new_utc.isoformat(), event_id)
         )
+
         conn.commit()
         conn.close()
 
         await update.message.reply_text("✅ Horário atualizado!")
         return ConversationHandler.END
 
-    except:
-        await update.message.reply_text("Formato inválido. Use HH:MM")
+    except ValueError:
+        await update.message.reply_text("❌ Formato inválido. Use HH:MM")
         return EDIT_TIME
 
-async def back_to_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    menu = build_event_menu(query.from_user.id)
-
-    if not menu:
-        await query.edit_message_text("Você não possui eventos.")
-        return
-
-    await query.edit_message_text("📋 Seus eventos:", reply_markup=menu)
 # ======================
-# /START
+# START
 # ======================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "✨ Bem-vindo ao seu novo lembrete de eventos!\n\n"
+        "✨ Bem-vindo ao seu bot de lembretes!\n\n"
         "Use /novo para criar um evento 📅\n"
         "Use /lista para ver seus eventos 📋"
     )
@@ -303,10 +304,8 @@ def main():
 
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # START command (must be before conversation handler)
-    app.add_handler(CommandHandler("start", start))
-
-    conv_handler = ConversationHandler(
+    # criação
+    create_conv = ConversationHandler(
         entry_points=[CommandHandler("novo", novo)],
         states={
             TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_title)],
@@ -315,18 +314,27 @@ def main():
             DATE: [CallbackQueryHandler(calendar_handler)],
             TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_time)],
             RECURRENCE: [CallbackQueryHandler(set_recurrence)],
+        },
+        fallbacks=[CommandHandler("start", start)],
+    )
+
+    # edição
+    edit_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(edit_time_start, pattern="^edit_time$")],
+        states={
             EDIT_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_time)],
         },
         fallbacks=[],
     )
 
-    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("lista", lista))
+    app.add_handler(create_conv)
+    app.add_handler(edit_conv)
     app.add_handler(CallbackQueryHandler(view_event, pattern="^view_"))
-    app.add_handler(CallbackQueryHandler(back_to_list, pattern="^back_to_list$"))
-    app.add_handler(CallbackQueryHandler(edit_time, pattern="^edit_time$"))
 
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
