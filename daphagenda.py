@@ -266,9 +266,6 @@ def main():
     init_db()
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Ativa verificação automática a cada 60 segundos
-    app.job_queue.run_repeating(check_events, interval=60, first=10)
-
     # Start
     app.add_handler(CommandHandler("start", start))
 
@@ -295,6 +292,9 @@ def main():
     app.add_handler(CommandHandler("deletar", deletar))
     app.add_handler(CallbackQueryHandler(confirm_delete, pattern="^del_"))
     app.add_handler(CallbackQueryHandler(execute_delete, pattern="^delete_"))
+
+    # Ativa verificação automática a cada 60 segundos
+    app.job_queue.run_repeating(check_events, interval=60, first=10)
 
     # Run
     app.run_polling()
