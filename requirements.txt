@@ -1,5 +1,4 @@
 python-telegram-bot
 python-telegram-bot-calendar
-apscheduler
 pytz
 tzlocal
