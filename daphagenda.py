@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timedelta
+import pytz
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -13,7 +14,6 @@ from telegram.ext import (
     filters,
 )
 from telegram_bot_calendar import DetailedTelegramCalendar
-from apscheduler.schedulers.background import BackgroundScheduler
 
 # ======================
 # CONFIG
@@ -231,9 +231,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ======================
 # NOTIFICAÇÕES AUTOMÁTICAS
 # ======================
-def check_events(application):
+async def check_events(context: ContextTypes.DEFAULT_TYPE):
     brasil_tz = pytz.timezone("America/Sao_Paulo")
-    now = datetime.now(brasil_tz)  # horário atual em Brasília
+    now = datetime.now(brasil_tz)
 
     conn = sqlite3.connect("reminders.db")
     cursor = conn.cursor()
@@ -243,12 +243,10 @@ def check_events(application):
 
     for event_id, user_id, title, dt_str, recurrence in events:
         dt = datetime.fromisoformat(dt_str)
-        # ajusta a data do evento para horário de Brasília às 07:00
-        event_time = brasil_tz.localize(datetime(dt.year, dt.month, dt.day, 7, 0, 0))
 
         send_notification = False
 
-        if recurrence == "once" and event_time.date() == now.date() and now.hour == 7 and now.minute == 0:
+        if recurrence == "once" and dt.date() == now.date() and now.hour == 7 and now.minute == 0:
             send_notification = True
         elif recurrence == "daily" and now.hour == 7 and now.minute == 0:
             send_notification = True
@@ -256,7 +254,10 @@ def check_events(application):
             send_notification = True
 
         if send_notification:
-            application.bot.send_message(chat_id=user_id, text=f"🧸 Lembrete: {title} hoje!")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"🧸 Lembrete: {title} hoje!"
+            )
 
 # ======================
 # MAIN
@@ -264,6 +265,9 @@ def check_events(application):
 def main():
     init_db()
     app = ApplicationBuilder().token(TOKEN).build()
+
+    # Ativa verificação automática a cada 60 segundos
+    app.job_queue.run_repeating(check_events, interval=60, first=10)
 
     # Start
     app.add_handler(CommandHandler("start", start))
@@ -291,11 +295,6 @@ def main():
     app.add_handler(CommandHandler("deletar", deletar))
     app.add_handler(CallbackQueryHandler(confirm_delete, pattern="^del_"))
     app.add_handler(CallbackQueryHandler(execute_delete, pattern="^delete_"))
-
-    # Scheduler
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(lambda: check_events(app), 'interval', minutes=1)
-    scheduler.start()
 
     # Run
     app.run_polling()
