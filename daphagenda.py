@@ -246,7 +246,7 @@ async def check_events(context: ContextTypes.DEFAULT_TYPE):
 
         send_notification = False
 
-        if recurrence == "once" and dt.date() == now.date() and now.hour == now.7 and now.minute == 0:
+        if recurrence == "once" and dt.date() == now.date() and now.hour == 7 and now.minute == 0:
             send_notification = True
         elif recurrence == "daily" and now.hour == 7 and now.minute == 0:
             send_notification = True
